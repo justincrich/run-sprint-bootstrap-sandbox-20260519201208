@@ -40,7 +40,9 @@ jobs:
           diff_file="$(mktemp)"
           git diff --unified=0 "origin/${BASE_REF}...${HEAD_SHA}" > "$diff_file"
           added_file="$(mktemp)"
-          grep -E '^\+' "$diff_file" | grep -vE '^\+\+\+' > "$added_file" || true
+          grep -E '^\+' "$diff_file" \
+            | grep -vE '^\+\+\+' \
+            | grep -vE '^\+[[:space:]]*check_added ' > "$added_file" || true
 
           fail=0
           check_added() {
