@@ -1,0 +1,70 @@
+name: evidence-bundle-audit
+
+on:
+  pull_request:
+    branches:
+      - main
+      - sprint-*
+  issue_comment:
+    types:
+      - created
+      - edited
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  audit:
+    name: evidence-bundle-audit
+    if: ${{ github.event_name == 'pull_request' || github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+    steps:
+      - name: Compare latest implementer evidence SHA to PR head
+        run: |
+          set -euo pipefail
+          owner="${REPOSITORY%%/*}"
+          expected_author="${owner}-implementer[bot]"
+          pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          pr_title="$(printf '%s' "$pr_json" | jq -r '.title')"
+          actual_sha="$(printf '%s' "$pr_json" | jq -r '.head.sha')"
+          latest_b64="$(gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- KB-PR-COMMENT v1: implementer-changes -->")) | @base64' \
+            | tail -1 || true)"
+
+          if [ -z "$latest_b64" ]; then
+            if [ "$pr_title" = "bootstrap: install rulesets + workflows + CODEOWNERS + lefthook" ]; then
+              echo "Bootstrap PR installs evidence-bundle-audit; no implementer evidence comment is expected."
+              exit 0
+            fi
+            echo "::error::No implementer evidence comment found"
+            exit 1
+          fi
+          latest="$(printf '%s' "$latest_b64" | base64 -d)"
+
+          author="$(printf '%s' "$latest" | jq -r '.user.login')"
+          if [ "$author" != "$expected_author" ]; then
+            gh issue edit "$PR_NUMBER" --repo "$REPOSITORY" --add-label tamper-suspected
+            echo "::error::Forged implementer-changes comment by ${author}; expected ${expected_author}"
+            exit 1
+          fi
+
+          body_file="$(mktemp)"
+          printf '%s' "$latest" | jq -r '.body' > "$body_file"
+          claimed="$(grep -oE '<!-- commit_sha: [a-f0-9]{40} -->' "$body_file" | head -1 | sed 's/.*: //; s/ -->//' || true)"
+          if [ -z "$claimed" ]; then
+            echo "::error::Latest implementer-changes comment is missing commit_sha metadata"
+            exit 1
+          fi
+
+          if [ "$claimed" != "$actual_sha" ]; then
+            echo "::error::Evidence SHA mismatch: implementer claimed ${claimed}, PR head is ${actual_sha}"
+            exit 1
+          fi
+
+          echo "Evidence SHA matches PR head: ${actual_sha}"

@@ -1,0 +1,49 @@
+name: task-pull-verify
+
+on:
+  pull_request:
+    branches:
+      - sprint-*
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  statuses : read
+  pull-requests: read
+
+jobs:
+  verify:
+    name: task-pull-verify
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.base_ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify dry-run merge and iron-gate status
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '"remote_pr=\(.number)"'
+          git fetch --no-tags --prune origin "${BASE_REF}"
+          git merge-tree "origin/${BASE_REF}" "${HEAD_SHA}" > /tmp/task-merge-tree.txt
+          if grep -qE '^(<<<<<<<|=======|>>>>>>>)' /tmp/task-merge-tree.txt; then
+            echo "::error::Dry-run merge contains conflict markers"
+            exit 1
+          fi
+          state="$(gh api "repos/${REPOSITORY}/commits/${HEAD_SHA}/statuses" \
+            --jq '[.[] | select(.context == "iron-gate")] | sort_by(.created_at) | last | .state // "missing"')"
+          if [ "$state" != success ]; then
+            echo "::error::iron-gate status for ${HEAD_SHA} is ${state}"
+            exit 1
+          fi

@@ -1,0 +1,20 @@
+name: revision-cap-enforcer
+
+on:
+  pull_request:
+    branches:
+      - sprint-*
+
+permissions:
+  contents: read
+
+jobs:
+  enforce:
+    name: revision-cap-enforcer
+    runs-on: ubuntu-latest
+    steps:
+      - name: RUNSPRINT-015 insertion point
+        run: |
+          set -euo pipefail
+          # TODO: logic filled in by RUNSPRINT-015
+          echo "revision-cap-enforcer logic is scheduled for RUNSPRINT-015"

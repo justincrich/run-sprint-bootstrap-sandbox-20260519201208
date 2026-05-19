@@ -1,0 +1,20 @@
+name: vanity-test-gate
+
+on:
+  pull_request:
+    branches:
+      - sprint-*
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: vanity-test-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: RUNSPRINT-015 insertion point
+        run: |
+          set -euo pipefail
+          # TODO: logic filled in by RUNSPRINT-015
+          echo "vanity-test-gate logic is scheduled for RUNSPRINT-015"

@@ -1,0 +1,88 @@
+name: anti-tamper-scan
+
+on:
+  pull_request:
+    branches:
+      - main
+      - sprint-*
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  scan:
+    name: anti-tamper-scan
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.base_ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Resolve PR from remote
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq '"remote_pr=\(.number) base=\(.base.ref) head=\(.head.sha)"'
+
+      - name: Checkout PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Scan added lines for cheat patterns
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin "${BASE_REF}"
+          diff_file="$(mktemp)"
+          git diff --unified=0 "origin/${BASE_REF}...${HEAD_SHA}" > "$diff_file"
+          added_file="$(mktemp)"
+          grep -E '^\+' "$diff_file" \
+            | grep -vE '^\+\+\+' \
+            | grep -vE '^\+[[:space:]]*check_added ' > "$added_file" || true
+
+          fail=0
+          check_added() {
+            local pattern="$1"
+            local description="$2"
+            local matches
+            matches="$(grep -E "$pattern" "$added_file" || true)"
+            if [ -n "$matches" ]; then
+              echo "::error::${description}"
+              echo "$matches"
+              fail=1
+            fi
+          }
+
+          check_added '\.(skip|todo)\s*\(' 'newly-added .skip or .todo test marker'
+          check_added '@ts-(ignore|nocheck|expect-error)' 'newly-added TypeScript suppression'
+          check_added 'eslint-disable(-next-line)?' 'newly-added eslint-disable'
+          check_added 'expect\.any\s*\(' 'newly-added expect.any assertion weakening'
+          check_added 'pytest\.mark\.skip|pytest\.skip\s*\(|unittest\.skip|# type: ignore|# noqa(\b|:)|assert True\b' 'newly-added Python test/type suppression'
+          check_added 't\.Skip\s*\(|t\.SkipNow\s*\(|//\s*nolint\b|//go:build ignore\b|_ = err\b' 'newly-added Go test/lint bypass'
+          check_added '#\[ignore\]|#\[allow\(|unwrap\(\)\.expect\("T(O)DO"\)' 'newly-added Rust ignore/allow marker'
+          check_added 'XCTSkip\s*\(|XCTSkipIf\s*\(|XCTSkipUnless\s*\(|// swiftlint:disable' 'newly-added Swift skip/lint bypass'
+          check_added '@Ignore\b|@Disabled\b|@Suppress\("' 'newly-added Kotlin/JVM skip or suppression'
+
+          prod_mocks="$(git diff "origin/${BASE_REF}...${HEAD_SHA}" -- 'src/**' \
+            | grep -E '^\+.*(jest\.mock|vi\.mock|sinon\.stub)\s*\(' || true)"
+          if [ -n "$prod_mocks" ]; then
+            echo "::error::Mock or stub introduced in production source"
+            echo "$prod_mocks"
+            fail=1
+          fi
+
+          no_verify="$(git log --format=%B "origin/${BASE_REF}...${HEAD_SHA}" | grep -iE '\bno[- ]verify\b' || true)"
+          if [ -n "$no_verify" ]; then
+            echo "::error::no-verify marker found in PR commit history"
+            echo "$no_verify"
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Tamper scan failed. Human exception requires an EXCEPTION-APPROVED comment."
+            exit 1
+          fi

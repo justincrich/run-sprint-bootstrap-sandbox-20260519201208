@@ -1,0 +1,84 @@
+name: test-count-floor
+
+on:
+  pull_request:
+    branches:
+      - sprint-*
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  floor:
+    name: test-count-floor
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.base_ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Resolve PR labels from remote
+        id: labels
+        run: |
+          set -euo pipefail
+          labels="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.labels[].name] | join(" ")')"
+          echo "labels=${labels}"
+          exempt=false
+          for task_type in infra config scaffold docs; do
+            case " ${labels} " in
+              *" type:${task_type} "*)
+                echo "::notice::PR labeled type:${task_type}; test-count-floor exempt"
+                exempt=true
+                ;;
+            esac
+          done
+          echo "exempt=${exempt}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR head
+        if: steps.labels.outputs.exempt != 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Count test definitions on base and head
+        if: steps.labels.outputs.exempt != 'true'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin "${BASE_REF}"
+
+          count_tests() {
+            local rev="$1"
+            local files
+            files="$(git ls-tree -r "$rev" --name-only \
+              | grep -E '\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|swift|kt|kts)$' || true)"
+            if [ -z "$files" ]; then
+              echo 0
+              return 0
+            fi
+            while IFS= read -r file; do
+              git show "${rev}:${file}" 2>/dev/null || true
+            done <<< "$files" \
+              | grep -cE '\b(it|test|describe)\s*\(\s*['"'"'"]|def test_|func Test|#\[test\]|func test|@Test\b' \
+              || true
+          }
+
+          base_count="$(count_tests "origin/${BASE_REF}")"
+          head_count="$(count_tests "${HEAD_SHA}")"
+          echo "base_count=${base_count}"
+          echo "head_count=${head_count}"
+
+          if [ "$head_count" -lt "$base_count" ]; then
+            echo "::error::Test count decreased from ${base_count} to ${head_count}"
+            echo "::error::Provide reviewer-accepted '### Test removal justification' for legitimate removals."
+            exit 1
+          fi

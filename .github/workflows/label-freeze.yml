@@ -1,0 +1,58 @@
+name: label-freeze
+
+on:
+  pull_request:
+    branches:
+      - main
+      - sprint-*
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  freeze:
+    name: label-freeze
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Compare PR type label to linked issue type label
+        run: |
+          set -euo pipefail
+          pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          pr_title="$(printf '%s' "$pr_json" | jq -r '.title')"
+          if [ "$pr_title" = "bootstrap: install rulesets + workflows + CODEOWNERS + lefthook" ]; then
+            echo "Bootstrap PR installs label-freeze; no linked issue type label is expected."
+            exit 0
+          fi
+          pr_body="$(printf '%s' "$pr_json" | jq -r '.body // ""')"
+          issue_number="$(printf '%s\n' "$pr_body" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | head -1 | grep -oE '[0-9]+' || true)"
+          if [ -z "$issue_number" ]; then
+            echo "::error::No linked issue found in PR body via Closes #N marker"
+            exit 1
+          fi
+
+          pr_type="$(printf '%s' "$pr_json" | jq -r '[.labels[].name | select(startswith("type:"))] | sort | join(" ")')"
+          issue_type="$(gh api "repos/${REPOSITORY}/issues/${issue_number}" \
+            --jq '[.labels[].name | select(startswith("type:"))] | sort | join(" ")')"
+
+          echo "pr_type=${pr_type}"
+          echo "issue_type=${issue_type}"
+          if [ -z "$issue_type" ]; then
+            echo "::error::Linked issue #${issue_number} has no type:* label"
+            exit 1
+          fi
+          if [ "$pr_type" != "$issue_type" ]; then
+            echo "::error::PR type label drift: PR '${pr_type}' differs from issue #${issue_number} '${issue_type}'"
+            exit 1
+          fi

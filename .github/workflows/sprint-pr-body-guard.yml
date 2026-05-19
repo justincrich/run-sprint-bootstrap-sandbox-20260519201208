@@ -1,0 +1,54 @@
+name: sprint-pr-body-guard
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    name: sprint-pr-body-guard
+    if: ${{ startsWith(github.head_ref, 'sprint-') || startsWith(github.event.pull_request.title, '[sprint') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Validate sprint PR body machine block
+        run: |
+          set -euo pipefail
+          body="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')"
+          start_count="$(printf '%s' "$body" | grep -c '<!-- KB-SPRINT-PR-BODY-MACHINE v1 -->' || true)"
+          end_count="$(printf '%s' "$body" | grep -c '<!-- /KB-SPRINT-PR-BODY-MACHINE v1 -->' || true)"
+          if [ "$start_count" -gt 1 ] || [ "$end_count" -gt 1 ]; then
+            echo "::error::Sprint PR machine block appears more than once"
+            exit 1
+          fi
+          if [ "$start_count" -ne "$end_count" ]; then
+            echo "::error::Sprint PR machine block delimiters are unbalanced"
+            exit 1
+          fi
+          if [ "$start_count" -eq 1 ]; then
+            printf '%s' "$body" | awk '
+              /<!-- KB-SPRINT-PR-BODY-MACHINE v1 -->/ { in_block=1; next }
+              /<!-- \/KB-SPRINT-PR-BODY-MACHINE v1 -->/ { in_block=0; seen=1; next }
+              in_block { print }
+              END { if (!seen) exit 1 }
+            ' > /tmp/machine-block.txt
+            grep -q '## Machine status' /tmp/machine-block.txt || {
+              echo "::error::Machine block is present but missing machine status content"
+              exit 1
+            }
+          else
+            echo "::notice::Machine block not present yet; sprint-pr-status-footer will create it"
+          fi

@@ -1,0 +1,6 @@
+# run-sprint bootstrap CODEOWNERS template.
+*  @{github-handle}
+/.github/** @{github-handle}
+/.github/workflows/** @{github-handle}
+/.github/rulesets/** @{github-handle}
+/.github/CODEOWNERS @{github-handle}

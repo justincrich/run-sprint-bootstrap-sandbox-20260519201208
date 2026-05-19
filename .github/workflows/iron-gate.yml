@@ -1,0 +1,129 @@
+name: iron-gate
+
+on:
+  pull_request:
+    branches:
+      - main
+      - sprint-*
+  repository_dispatch:
+    types:
+      - iron-gate
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      sha:
+        required: true
+        type: string
+      pr_base_not_protected:
+        required: true
+        type: boolean
+      requirements_satisfied:
+        required: true
+        type: boolean
+      zero_critical_stubs:
+        required: true
+        type: boolean
+      ci_success:
+        required: true
+        type: boolean
+      no_human_changes_requested:
+        required: true
+        type: boolean
+      refactor_decision_present:
+        required: true
+        type: boolean
+      reviewer_bot_not_author_bot:
+        required: true
+        type: boolean
+      spec_ack_sha_match:
+        required: true
+        type: boolean
+      reviewer_approved_or_override:
+        required: true
+        type: boolean
+      specialty_match_via_metadata:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+  statuses : write
+
+jobs:
+  status:
+    name: iron-gate
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_TITLE: ${{ github.event.pull_request.title || '' }}
+    steps:
+      - name: Post iron-gate commit status
+        env:
+          DISPATCH_PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          CALL_INPUTS: ${{ toJSON(inputs) }}
+        run: |
+          set -euo pipefail
+          payload="$(mktemp)"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "$PR_TITLE" = "bootstrap: install rulesets + workflows + CODEOWNERS + lefthook" ]; then
+              echo "Bootstrap PR installs iron-gate; no orchestrator predicate payload is expected."
+              exit 0
+            fi
+            echo "::error::iron-gate pull_request run requires orchestrator repository_dispatch or workflow_call payload"
+            exit 1
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            printf '%s' "$DISPATCH_PAYLOAD" > "$payload"
+          else
+            printf '%s' "$CALL_INPUTS" > "$payload"
+          fi
+
+          sha="$(jq -r '.sha // empty' "$payload")"
+          if [ -z "$sha" ]; then
+            echo "::error::iron-gate payload missing sha"
+            exit 1
+          fi
+
+          clauses='[
+            "pr_base_not_protected",
+            "requirements_satisfied",
+            "zero_critical_stubs",
+            "ci_success",
+            "no_human_changes_requested",
+            "refactor_decision_present",
+            "reviewer_bot_not_author_bot",
+            "spec_ack_sha_match",
+            "reviewer_approved_or_override",
+            "specialty_match_via_metadata"
+          ]'
+
+          failing=""
+          while IFS= read -r clause; do
+            value="$(jq -r --arg clause "$clause" '.[$clause] // false' "$payload")"
+            if [ "$clause" = reviewer_bot_not_author_bot ]; then
+              echo "reviewer_bot != author_bot=${value}"
+            fi
+            echo "${clause}=${value}"
+            if [ "$value" != "true" ]; then
+              failing="${failing} ${clause}"
+            fi
+          done < <(printf '%s' "$clauses" | jq -r '.[]')
+
+          if [ -n "$failing" ]; then
+            state=failure
+            description="iron-gate failed:${failing}"
+          else
+            state=success
+            description="iron-gate passed: all 10 predicate clauses true"
+          fi
+
+          gh api "repos/${REPOSITORY}/statuses/${sha}" \
+            -f state="$state" \
+            -f context=iron-gate \
+            -f description="$description"
+
+          if [ "$state" != success ]; then
+            exit 1
+          fi

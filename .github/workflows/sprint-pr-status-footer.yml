@@ -1,0 +1,73 @@
+name: sprint-pr-status-footer
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  footer:
+    name: sprint-pr-status-footer
+    if: ${{ startsWith(github.head_ref, 'sprint-') || startsWith(github.event.pull_request.title, '[sprint') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Render and write machine footer block
+        run: |
+          set -euo pipefail
+          pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          body="$(printf '%s' "$pr_json" | jq -r '.body // ""')"
+          head_ref="$(printf '%s' "$pr_json" | jq -r '.head.ref')"
+          task_prs="$(gh pr list --repo "$REPOSITORY" --base "$head_ref" --state all \
+            --json number,title,state,headRefName,url \
+            --jq '.[] | "- #\(.number) \(.state) \(.title) \(.url)"' || true)"
+
+          footer="$(mktemp)"
+          {
+            echo "<!-- KB-SPRINT-PR-BODY-MACHINE v1 -->"
+            echo "## Machine status"
+            echo ""
+            echo "Sprint branch: ${head_ref}"
+            echo ""
+            if [ -n "$task_prs" ]; then
+              printf '%s\n' "$task_prs"
+            else
+              echo "No task PRs found for this sprint branch."
+            fi
+            echo "<!-- /KB-SPRINT-PR-BODY-MACHINE v1 -->"
+          } > "$footer"
+
+          body_file="$(mktemp)"
+          printf '%s\n' "$body" > "$body_file"
+          if grep -q '<!-- KB-SPRINT-PR-BODY-MACHINE v1 -->' "$body_file"; then
+            FOOTER="$footer" awk '
+              BEGIN { skipping=0 }
+              /<!-- KB-SPRINT-PR-BODY-MACHINE v1 -->/ {
+                while ((getline line < ENVIRON["FOOTER"]) > 0) print line
+                skipping=1
+                next
+              }
+              /<!-- \/KB-SPRINT-PR-BODY-MACHINE v1 -->/ { skipping=0; next }
+              skipping == 0 { print }
+            ' "$body_file" > /tmp/new-body.md
+          else
+            cp "$body_file" /tmp/new-body.md
+            {
+              echo ""
+              cat "$footer"
+            } >> /tmp/new-body.md
+          fi
+
+          gh pr edit "$PR_NUMBER" --repo "$REPOSITORY" --body-file /tmp/new-body.md
