@@ -1,0 +1,60 @@
+{
+  "main": [
+    {
+      "context": "pr-validation"
+    },
+    {
+      "context": "anti-tamper-scan"
+    },
+    {
+      "context": "evidence-bundle-audit"
+    },
+    {
+      "context": "path-guard"
+    },
+    {
+      "context": "iron-gate"
+    },
+    {
+      "context": "label-freeze"
+    },
+    {
+      "context": "comment-author-guard"
+    }
+  ],
+  "sprint": [
+    {
+      "context": "pr-validation"
+    },
+    {
+      "context": "anti-tamper-scan"
+    },
+    {
+      "context": "evidence-bundle-audit"
+    },
+    {
+      "context": "path-guard"
+    },
+    {
+      "context": "iron-gate"
+    },
+    {
+      "context": "label-freeze"
+    },
+    {
+      "context": "comment-author-guard"
+    },
+    {
+      "context": "task-pull-verify"
+    },
+    {
+      "context": "sprint-pull-verify"
+    },
+    {
+      "context": "sprint-pr-status-footer"
+    },
+    {
+      "context": "sprint-pr-body-guard"
+    }
+  ]
+}

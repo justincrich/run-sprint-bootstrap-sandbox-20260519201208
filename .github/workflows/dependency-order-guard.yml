@@ -1,0 +1,20 @@
+name: dependency-order-guard
+
+on:
+  pull_request:
+    branches:
+      - sprint-*
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: dependency-order-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: RUNSPRINT-015 insertion point
+        run: |
+          set -euo pipefail
+          # TODO: logic filled in by RUNSPRINT-015
+          echo "dependency-order-guard logic is scheduled for RUNSPRINT-015"

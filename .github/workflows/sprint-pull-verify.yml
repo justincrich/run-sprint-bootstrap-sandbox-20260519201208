@@ -1,0 +1,54 @@
+name: sprint-pull-verify
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  verify:
+    name: sprint-pull-verify
+    if: ${{ startsWith(github.head_ref, 'sprint-') || startsWith(github.event.pull_request.title, '[sprint') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.base_ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout sprint PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify sprint dry-run merge
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '"remote_pr=\(.number)"'
+          git fetch --no-tags --prune origin "${BASE_REF}"
+          git merge-tree "origin/${BASE_REF}" "${HEAD_SHA}" > /tmp/sprint-merge-tree.txt
+          if grep -qE '^(<<<<<<<|=======|>>>>>>>)' /tmp/sprint-merge-tree.txt; then
+            echo "::error::Dry-run sprint merge contains conflict markers"
+            exit 1
+          fi
+          if [ -f .github/sprint-state/.merge-shas ]; then
+            while IFS= read -r sha; do
+              [ -z "$sha" ] && continue
+              git merge-base --is-ancestor "$sha" "${HEAD_SHA}" || {
+                echo "::error::Recorded task merge SHA ${sha} is not reachable from sprint head"
+                exit 1
+              }
+            done < .github/sprint-state/.merge-shas
+          else
+            echo "::warning::.github/sprint-state/.merge-shas missing; no per-task merge SHA reachability assertions"
+          fi

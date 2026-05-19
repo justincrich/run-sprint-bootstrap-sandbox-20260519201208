@@ -1,0 +1,67 @@
+name: comment-author-guard
+
+on:
+  issue_comment:
+    types:
+      - created
+      - edited
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  guard:
+    name: comment-author-guard
+    if: ${{ github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+      COMMENT_BODY: ${{ github.event.comment.body }}
+    steps:
+      - name: Validate structured comment author
+        run: |
+          set -euo pipefail
+          owner="${REPOSITORY%%/*}"
+          expected=""
+          marker=""
+          case "$COMMENT_BODY" in
+            "<!-- KB-PR-COMMENT v1: implementer-changes -->"*)
+              expected="${owner}-implementer[bot]"
+              marker="implementer-changes"
+              ;;
+            "<!-- KB-PR-COMMENT v1: reviewer-feedback -->"*)
+              expected="${owner}-reviewer[bot]"
+              marker="reviewer-feedback"
+              ;;
+            "<!-- KB-PR-COMMENT v1: orchestrator-iron-gate -->"*)
+              expected="${owner}-orchestrator[bot]"
+              marker="orchestrator-iron-gate"
+              ;;
+            "<!-- KB-PR-COMMENT v1: agent-journal -->"*)
+              marker="agent-journal"
+              case "$COMMENT_AUTHOR" in
+                "${owner}-implementer[bot]"|"${owner}-reviewer[bot]"|"${owner}-orchestrator[bot]")
+                  expected="$COMMENT_AUTHOR"
+                  ;;
+                *)
+                  expected="${owner}-orchestrator[bot]"
+                  ;;
+              esac
+              ;;
+            *)
+              echo "::notice::No structured run-sprint marker; nothing to validate"
+              exit 0
+              ;;
+          esac
+
+          if [ "$COMMENT_AUTHOR" != "$expected" ]; then
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPOSITORY" --add-label tamper-suspected
+            echo "::error::Forged ${marker} comment by ${COMMENT_AUTHOR}; expected ${expected}"
+            exit 1
+          fi
+          echo "${marker} comment author validated: ${COMMENT_AUTHOR}"

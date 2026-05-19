@@ -1,0 +1,98 @@
+name: required-checks-drift-guard
+
+on:
+  push:
+    branches:
+      - main
+      - sprint-*
+    paths:
+      - required-checks.json
+      - main.ruleset.json
+      - sprint.ruleset.json
+      - .github/rulesets/required-checks.json
+      - .github/rulesets/main.ruleset.json
+      - .github/rulesets/sprint.ruleset.json
+      - .github/workflows/*.yml
+  pull_request:
+    branches:
+      - main
+      - sprint-*
+    paths:
+      - required-checks.json
+      - main.ruleset.json
+      - sprint.ruleset.json
+      - .github/rulesets/required-checks.json
+      - .github/rulesets/main.ruleset.json
+      - .github/rulesets/sprint.ruleset.json
+      - .github/workflows/*.yml
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: required-checks-drift-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Fail on required-check drift
+        run: |
+          set -euo pipefail
+          required_file=""
+          for candidate in .github/rulesets/required-checks.json required-checks.json .required-checks.json; do
+            if [ -f "$candidate" ]; then
+              required_file="$candidate"
+              break
+            fi
+          done
+          [ -n "$required_file" ] || { echo "::error::required-checks.json not found"; exit 1; }
+
+          main_ruleset=""
+          sprint_ruleset=""
+          for candidate in .github/rulesets/main.ruleset.json main.ruleset.json; do
+            [ -f "$candidate" ] && main_ruleset="$candidate" && break
+          done
+          for candidate in .github/rulesets/sprint.ruleset.json sprint.ruleset.json; do
+            [ -f "$candidate" ] && sprint_ruleset="$candidate" && break
+          done
+          [ -n "$main_ruleset" ] || { echo "::error::main.ruleset.json not found"; exit 1; }
+          [ -n "$sprint_ruleset" ] || { echo "::error::sprint.ruleset.json not found"; exit 1; }
+
+          extract_contexts() {
+            local file="$1"
+            jq -r '
+              if has("main") or has("sprint") then
+                empty
+              else
+                .rules[]
+                | select(.type == "required_status_checks")
+                | .parameters.required_status_checks[]
+                | .context
+              end
+            ' "$file" 2>/dev/null || true
+          }
+
+          main_required="$(jq -r '.main[].context' "$required_file" | sort -u)"
+          sprint_required="$(jq -r '.sprint[].context' "$required_file" | sort -u)"
+          main_rules="$(extract_contexts "$main_ruleset" | sort -u)"
+          sprint_rules="$(extract_contexts "$sprint_ruleset" | sort -u)"
+
+          if grep -q '{{required_status_checks}}' "$main_ruleset"; then
+            main_rules="$main_required"
+          fi
+          if grep -q '{{required_status_checks}}' "$sprint_ruleset"; then
+            sprint_rules="$sprint_required"
+          fi
+
+          missing_main="$(comm -23 <(printf '%s\n' "$main_required") <(printf '%s\n' "$main_rules") || true)"
+          missing_sprint="$(comm -23 <(printf '%s\n' "$sprint_required") <(printf '%s\n' "$sprint_rules") || true)"
+          if [ -n "$missing_main" ] || [ -n "$missing_sprint" ]; then
+            echo "::error::Required-check drift detected"
+            [ -n "$missing_main" ] && printf 'main missing:\n%s\n' "$missing_main"
+            [ -n "$missing_sprint" ] && printf 'sprint missing:\n%s\n' "$missing_sprint"
+            exit 1
+          fi

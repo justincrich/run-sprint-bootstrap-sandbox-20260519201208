@@ -1,0 +1,97 @@
+name: pr-validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - sprint-*
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: pr-validation
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Resolve PR from remote
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq '"remote_pr=\(.number) base=\(.base.ref) head=\(.head.sha)"'
+
+      - name: Checkout PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Run project validation commands
+        run: |
+          set -euo pipefail
+
+          run_if_script_exists() {
+            local script="$1"
+            if [ -f package.json ] && node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts['$script'] ? 0 : 1)" 2>/dev/null; then
+              if [ -f pnpm-lock.yaml ]; then
+                corepack enable
+                pnpm install --frozen-lockfile
+                pnpm run "$script"
+              elif [ -f yarn.lock ]; then
+                corepack enable
+                yarn install --immutable || yarn install --frozen-lockfile
+                yarn "$script"
+              elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+                npm ci
+                npm run "$script"
+              else
+                npm install
+                npm run "$script"
+              fi
+              return 0
+            fi
+            return 1
+          }
+
+          ran=0
+          for script in typecheck lint test; do
+            if run_if_script_exists "$script"; then
+              ran=1
+            else
+              echo "::notice::No package.json script named ${script}; skipping"
+            fi
+          done
+
+          if [ -f Cargo.toml ]; then
+            cargo check
+            cargo test
+            ran=1
+          fi
+
+          if [ -f go.mod ]; then
+            go test ./...
+            ran=1
+          fi
+
+          if [ -f pyproject.toml ] || [ -f pytest.ini ] || [ -d tests ]; then
+            python -m pytest -q
+            ran=1
+          fi
+
+          if [ "$ran" -eq 0 ]; then
+            echo "::notice::No recognized validation command found"
+          fi
+
+      - name: Note evidence bundle presence
+        run: |
+          set -euo pipefail
+          if [ -d .tmp ]; then
+            find .tmp -type f -maxdepth 3 -print | sed 's/^/evidence: /'
+          else
+            echo "::notice::No .tmp evidence bundle present"
+          fi

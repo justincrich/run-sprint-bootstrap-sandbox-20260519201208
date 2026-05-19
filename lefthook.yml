@@ -1,0 +1,8 @@
+pre-push:
+  commands:
+    actionlint-workflows:
+      glob: ".github/workflows/**/*.yml"
+      run: actionlint .github/workflows/**/*.yml
+    shellcheck-workflow-scripts:
+      glob: ".github/workflows/**/*.yml"
+      run: actionlint -shellcheck shellcheck .github/workflows/**/*.yml
