@@ -1,6 +1,10 @@
 name: comment-author-guard
 
 on:
+  pull_request:
+    branches:
+      - main
+      - sprint-*
   issue_comment:
     types:
       - created

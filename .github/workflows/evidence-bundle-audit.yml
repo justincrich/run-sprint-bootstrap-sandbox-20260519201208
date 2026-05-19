@@ -3,6 +3,7 @@ name: evidence-bundle-audit
 on:
   pull_request:
     branches:
+      - main
       - sprint-*
   issue_comment:
     types:
@@ -30,12 +31,17 @@ jobs:
           owner="${REPOSITORY%%/*}"
           expected_author="${owner}-implementer[bot]"
           pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          pr_title="$(printf '%s' "$pr_json" | jq -r '.title')"
           actual_sha="$(printf '%s' "$pr_json" | jq -r '.head.sha')"
           latest_b64="$(gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
             --jq '.[] | select(.body | startswith("<!-- KB-PR-COMMENT v1: implementer-changes -->")) | @base64' \
             | tail -1 || true)"
 
           if [ -z "$latest_b64" ]; then
+            if [ "$pr_title" = "bootstrap: install rulesets + workflows + CODEOWNERS + lefthook" ]; then
+              echo "Bootstrap PR installs evidence-bundle-audit; no implementer evidence comment is expected."
+              exit 0
+            fi
             echo "::error::No implementer evidence comment found"
             exit 1
           fi

@@ -3,6 +3,7 @@ name: label-freeze
 on:
   pull_request:
     branches:
+      - main
       - sprint-*
     types:
       - opened
@@ -29,6 +30,11 @@ jobs:
         run: |
           set -euo pipefail
           pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          pr_title="$(printf '%s' "$pr_json" | jq -r '.title')"
+          if [ "$pr_title" = "bootstrap: install rulesets + workflows + CODEOWNERS + lefthook" ]; then
+            echo "Bootstrap PR installs label-freeze; no linked issue type label is expected."
+            exit 0
+          fi
           pr_body="$(printf '%s' "$pr_json" | jq -r '.body // ""')"
           issue_number="$(printf '%s\n' "$pr_body" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | head -1 | grep -oE '[0-9]+' || true)"
           if [ -z "$issue_number" ]; then

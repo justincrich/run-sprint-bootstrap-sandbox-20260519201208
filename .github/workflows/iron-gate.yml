@@ -1,6 +1,10 @@
 name: iron-gate
 
 on:
+  pull_request:
+    branches:
+      - main
+      - sprint-*
   repository_dispatch:
     types:
       - iron-gate
@@ -54,6 +58,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       REPOSITORY: ${{ github.repository }}
+      PR_TITLE: ${{ github.event.pull_request.title || '' }}
     steps:
       - name: Post iron-gate commit status
         env:
@@ -62,7 +67,14 @@ jobs:
         run: |
           set -euo pipefail
           payload="$(mktemp)"
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "$PR_TITLE" = "bootstrap: install rulesets + workflows + CODEOWNERS + lefthook" ]; then
+              echo "Bootstrap PR installs iron-gate; no orchestrator predicate payload is expected."
+              exit 0
+            fi
+            echo "::error::iron-gate pull_request run requires orchestrator repository_dispatch or workflow_call payload"
+            exit 1
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             printf '%s' "$DISPATCH_PAYLOAD" > "$payload"
           else
             printf '%s' "$CALL_INPUTS" > "$payload"
